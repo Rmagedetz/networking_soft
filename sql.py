@@ -177,8 +177,6 @@ class Task(Base):
     executor = relationship("User", foreign_keys=[executor_id])
     contact = relationship("Contacts")
 
-
-
     @classmethod
     def add_task(cls, creator_name, executor_name, contact_name, task_name, description, due_date, done=False):
         with session_scope() as session:
@@ -292,6 +290,109 @@ class Task(Base):
             if task:
                 session.delete(task)
                 session.commit()
+
+
+class Connections(Base):
+    __tablename__ = "connections"
+
+    connection_id = Column(Integer, primary_key=True)
+    cont1_id = Column(Integer, ForeignKey("contacts.contact_id"), nullable=False)
+    cont2_id = Column(Integer, ForeignKey("contacts.contact_id"), nullable=False)
+    description = Column(String(255), nullable=False)
+
+    # Связи с контактами
+    contact1 = relationship("Contacts", foreign_keys=[cont1_id])
+    contact2 = relationship("Contacts", foreign_keys=[cont2_id])
+    @classmethod
+    def add_connection(cls, contact1_name, contact2_name, description):
+        with session_scope() as session:
+            contact1 = session.query(Contacts).filter(Contacts.contact_name == contact1_name).first()
+            contact2 = session.query(Contacts).filter(Contacts.contact_name == contact2_name).first()
+
+            if not contact1 or not contact2:
+                raise ValueError("Один или оба контакта не найдены")
+
+            connection = cls(
+                cont1_id=contact1.contact_id,
+                cont2_id=contact2.contact_id,
+                description=description
+            )
+            session.add(connection)
+            session.commit()
+
+    @classmethod
+    def get_connections_as_dataframe(cls):
+        with session_scope() as session:
+            # Создаем псевдонимы для таблицы Contacts
+            contact1_alias = aliased(Contacts)
+            contact2_alias = aliased(Contacts)
+
+            connections = session.query(
+                cls.connection_id,
+                contact1_alias.contact_name.label("contact1_name"),
+                contact2_alias.contact_name.label("contact2_name"),
+                cls.description
+            ).join(contact1_alias, cls.cont1_id == contact1_alias.contact_id) \
+                .join(contact2_alias, cls.cont2_id == contact2_alias.contact_id).all()
+
+            # Преобразуем результат в DataFrame
+            df = pd.DataFrame(connections,
+                              columns=["connection_id", "contact1_name", "contact2_name", "description"])
+            df.index += 1
+        return df
+
+    @classmethod
+    def delete_connection(cls, connection_id):
+        with session_scope() as session:
+            connection = session.query(cls).filter_by(connection_id=connection_id).first()
+            if connection:
+                session.delete(connection)
+                session.commit()
+
+    @classmethod
+    def get_connections_for_contact(cls, contact_name):
+        with session_scope() as session:
+            # Получаем контакт по имени
+            contact = session.query(Contacts).filter(Contacts.contact_name == contact_name).first()
+
+            if not contact:
+                return None  # Если контакт не найден, возвращаем None
+
+            # Создаем псевдонимы для Contacts для использования в join
+            contact1_alias = aliased(Contacts)
+            contact2_alias = aliased(Contacts)
+
+            # Выполняем запрос для получения всех связей для данного контакта
+            connections = session.query(
+                # Если контакт является cont1, то возвращаем его имя и имя второго контакта
+                contact1_alias.contact_name.label("Контакт"),
+                cls.description.label("Связь")
+            ).join(contact1_alias, cls.cont1_id == contact1_alias.contact_id) \
+                .join(contact2_alias, cls.cont2_id == contact2_alias.contact_id) \
+                .filter(
+                (cls.cont1_id == contact.contact_id) | (cls.cont2_id == contact.contact_id),
+                cls.cont1_id != cls.cont2_id  # Исключаем связи с самим собой
+            ) \
+                .union(
+                session.query(
+                    contact2_alias.contact_name.label("Контакт"),
+                    cls.description.label("Связь")
+                ).join(contact1_alias, cls.cont1_id == contact1_alias.contact_id)
+                .join(contact2_alias, cls.cont2_id == contact2_alias.contact_id)
+                .filter(
+                    (cls.cont1_id == contact.contact_id) | (cls.cont2_id == contact.contact_id),
+                    cls.cont1_id != cls.cont2_id  # Исключаем связи с самим собой
+                )
+            ).all()
+
+            # Преобразуем результат в DataFrame
+            df = pd.DataFrame(connections, columns=["Контакт", "Связь"])
+
+            # Исключаем строки, где контакт сам с собой
+            df = df[df["Контакт"] != contact_name].reset_index(drop=True)
+            df.index += 1
+
+        return df
 
 
 Base.metadata.create_all(bind=engine)
