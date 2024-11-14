@@ -13,8 +13,8 @@ def login():
         submit = st.form_submit_button("Войти")
 
         if submit:
-            if user_input in sql.get_user_list():
-                if password_input == sql.check_user_password(user_input):
+            if user_input in sql.User.get_user_list():
+                if password_input == sql.User.check_user_password(user_input):
                     st.session_state.logged_in = True
                     st.session_state.user = user_input
                     st.rerun()
@@ -34,13 +34,16 @@ def logout():
 login_page = st.Page(login, title="Log in", icon=":material/login:")
 logout_page = st.Page(logout, title="Выйти", icon=":material/logout:")
 
-main_page = st.Page("pages/main_page.py", title=" Главная", icon=":material/group:", default=True)
+main_page = st.Page("pages/main_page.py", title="Главная", icon=":material/home:", default=True)
+circles_page = st.Page("pages/circles_page.py", title="Круги", icon=":material/settings_accessibility:")
+contacts_page = st.Page("pages/contacts_page.py", title="Контакты", icon=":material/contacts:")
+tasks_page = st.Page("pages/tasks.py", title="Задачи", icon=":material/add_task:")
 
 if st.session_state.logged_in:
     pg = st.navigation(
         {
             "Логин": [logout_page],
-            "Страницы": [main_page]
+            "Страницы": [main_page, circles_page, contacts_page, tasks_page]
         }
     )
 else:
