@@ -1,5 +1,5 @@
 import pandas as pd
-from sqlalchemy import Column, Integer, String, Date, Float, create_engine, ForeignKey, func, Boolean
+from sqlalchemy import Column, Integer, String, Date, Float, create_engine, ForeignKey, func, Boolean, case
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, aliased
 from sqlalchemy.exc import IntegrityError
 from contextlib import contextmanager
@@ -34,6 +34,15 @@ class User(Base):
         with session_scope() as session:
             result = session.query(cls.password).filter(cls.user_name == username).first()
             return result[0] if result else None
+
+    @classmethod
+    def get_user_id_by_name(cls, user_name):
+        with session_scope() as session:
+            user = session.query(cls).filter_by(user_name=user_name).first()
+            if user:
+                return user.user_id
+            else:
+                return None
 
 
 class Circles(Base):
@@ -97,6 +106,42 @@ class Circles(Base):
             contact = session.query(cls).filter_by(circle_name=circle_name).first()
             session.delete(contact)
 
+    @classmethod
+    def get_circle_stats(cls):
+        with session_scope() as session:
+            subquery_max_date = session.query(
+                Contacts.circle_id,
+                func.max(Contacts.last_interaction).label("last_interaction_date")
+            ).group_by(Contacts.circle_id).subquery()
+
+            result = session.query(
+                Circles.circle_name,
+                func.count(Contacts.contact_id).label("interaction_count"),
+                subquery_max_date.c.last_interaction_date,
+                func.group_concat(
+                    case(
+                        (Contacts.last_interaction == subquery_max_date.c.last_interaction_date, Contacts.contact_name),
+                        else_=""
+                    )
+                ).label("last_interaction_contacts")
+            ).join(
+                Contacts, Contacts.circle_id == Circles.circle_id
+            ).join(
+                subquery_max_date, subquery_max_date.c.circle_id == Circles.circle_id
+            ).group_by(
+                Circles.circle_name, subquery_max_date.c.last_interaction_date
+            ).all()
+
+        df = pd.DataFrame(result, columns=["circle_name", "interaction_count", "last_interaction_date",
+                                           "last_interaction_contacts"])
+
+        df['last_interaction_contacts'] = df['last_interaction_contacts'].apply(
+            lambda x: ', '.join([contact.strip() for contact in x.split(',') if contact.strip() != '']) if x else ''
+        )
+
+        df.index += 1
+        return df
+
 
 class Contacts(Base):
     __tablename__ = "contacts"
@@ -107,7 +152,6 @@ class Contacts(Base):
     last_interaction = Column(Date)
     circle_id = Column(Integer, ForeignKey("circles.circle_id"), nullable=False)
 
-    # Relationship with Circles
     circle = relationship("Circles", back_populates="contacts")
 
     @classmethod
@@ -172,7 +216,6 @@ class Task(Base):
     due_date = Column(Date)
     done = Column(Boolean)
 
-    # Relationships with Users and Contacts
     creator = relationship("User", foreign_keys=[creator_id])
     executor = relationship("User", foreign_keys=[executor_id])
     contact = relationship("Contacts")
@@ -196,7 +239,6 @@ class Task(Base):
                 done=done
             )
             session.add(task)
-            session.commit()
 
     @classmethod
     def edit_task(cls, task_id, **parameters):
@@ -229,6 +271,7 @@ class Task(Base):
             ).join(creator, cls.creator_id == creator.user_id) \
                 .join(executor, cls.executor_id == executor.user_id) \
                 .join(Contacts, cls.contact_id == Contacts.contact_id) \
+                .distinct() \
                 .all()
 
             df = pd.DataFrame(tasks,
@@ -244,19 +287,25 @@ class Task(Base):
             if not executor:
                 raise ValueError(f"User with name '{executor_name}' not found")
 
+            creator = aliased(User, name="creator")  # Создаем алиас для создателя задачи
+
             tasks = session.query(
                 cls.task_id,
                 cls.task_name,
                 cls.description,
                 cls.due_date,
-                Contacts.contact_name.label("contact_name")
-            ).join(User, cls.executor_id == executor.user_id) \
+                Contacts.contact_name.label("contact_name"),
+                creator.user_name.label("creator_name"),  # Имя создателя задачи
+                cls.done  # Статус выполнения задачи
+            ).join(creator, cls.creator_id == creator.user_id) \
                 .join(Contacts, cls.contact_id == Contacts.contact_id) \
-                .filter(cls.executor_id == executor.user_id, cls.done == False) \
+                .filter(cls.executor_id == executor.user_id) \
+                .distinct() \
                 .all()
 
             df = pd.DataFrame(tasks,
-                              columns=["id", "task_name", "description", "due_date", "contact_name"])
+                              columns=["id", "task_name", "description", "due_date", "contact_name", "creator_name",
+                                       "done"])
             df.index += 1
         return df
 
@@ -267,19 +316,25 @@ class Task(Base):
             if not creator:
                 raise ValueError(f"User with name '{creator_name}' not found")
 
+            executor = aliased(User, name="executor")  # Создаем алиас для исполнителя задачи
+
             tasks = session.query(
                 cls.task_id,
                 cls.task_name,
                 cls.description,
                 cls.due_date,
-                Contacts.contact_name.label("contact_name")
-            ).join(User, cls.creator_id == creator.user_id) \
+                Contacts.contact_name.label("contact_name"),
+                executor.user_name.label("executor_name"),  # Имя исполнителя задачи
+                cls.done  # Статус выполнения задачи
+            ).join(executor, cls.executor_id == executor.user_id) \
                 .join(Contacts, cls.contact_id == Contacts.contact_id) \
-                .filter(cls.creator_id == creator.user_id, cls.done == False) \
+                .filter(cls.creator_id == creator.user_id) \
+                .distinct() \
                 .all()
 
             df = pd.DataFrame(tasks,
-                              columns=["id", "task_name", "description", "due_date", "contact_name"])
+                              columns=["id", "task_name", "description", "due_date", "contact_name", "executor_name",
+                                       "done"])
             df.index += 1
         return df
 
@@ -300,9 +355,9 @@ class Connections(Base):
     cont2_id = Column(Integer, ForeignKey("contacts.contact_id"), nullable=False)
     description = Column(String(255), nullable=False)
 
-    # Связи с контактами
     contact1 = relationship("Contacts", foreign_keys=[cont1_id])
     contact2 = relationship("Contacts", foreign_keys=[cont2_id])
+
     @classmethod
     def add_connection(cls, contact1_name, contact2_name, description):
         with session_scope() as session:
@@ -323,7 +378,6 @@ class Connections(Base):
     @classmethod
     def get_connections_as_dataframe(cls):
         with session_scope() as session:
-            # Создаем псевдонимы для таблицы Contacts
             contact1_alias = aliased(Contacts)
             contact2_alias = aliased(Contacts)
 
@@ -335,7 +389,6 @@ class Connections(Base):
             ).join(contact1_alias, cls.cont1_id == contact1_alias.contact_id) \
                 .join(contact2_alias, cls.cont2_id == contact2_alias.contact_id).all()
 
-            # Преобразуем результат в DataFrame
             df = pd.DataFrame(connections,
                               columns=["connection_id", "contact1_name", "contact2_name", "description"])
             df.index += 1
@@ -352,26 +405,22 @@ class Connections(Base):
     @classmethod
     def get_connections_for_contact(cls, contact_name):
         with session_scope() as session:
-            # Получаем контакт по имени
             contact = session.query(Contacts).filter(Contacts.contact_name == contact_name).first()
 
             if not contact:
-                return None  # Если контакт не найден, возвращаем None
+                return None
 
-            # Создаем псевдонимы для Contacts для использования в join
             contact1_alias = aliased(Contacts)
             contact2_alias = aliased(Contacts)
 
-            # Выполняем запрос для получения всех связей для данного контакта
             connections = session.query(
-                # Если контакт является cont1, то возвращаем его имя и имя второго контакта
                 contact1_alias.contact_name.label("Контакт"),
                 cls.description.label("Связь")
             ).join(contact1_alias, cls.cont1_id == contact1_alias.contact_id) \
                 .join(contact2_alias, cls.cont2_id == contact2_alias.contact_id) \
                 .filter(
                 (cls.cont1_id == contact.contact_id) | (cls.cont2_id == contact.contact_id),
-                cls.cont1_id != cls.cont2_id  # Исключаем связи с самим собой
+                cls.cont1_id != cls.cont2_id
             ) \
                 .union(
                 session.query(
@@ -381,18 +430,99 @@ class Connections(Base):
                 .join(contact2_alias, cls.cont2_id == contact2_alias.contact_id)
                 .filter(
                     (cls.cont1_id == contact.contact_id) | (cls.cont2_id == contact.contact_id),
-                    cls.cont1_id != cls.cont2_id  # Исключаем связи с самим собой
+                    cls.cont1_id != cls.cont2_id
                 )
             ).all()
 
-            # Преобразуем результат в DataFrame
             df = pd.DataFrame(connections, columns=["Контакт", "Связь"])
 
-            # Исключаем строки, где контакт сам с собой
             df = df[df["Контакт"] != contact_name].reset_index(drop=True)
             df.index += 1
 
         return df
+
+
+class Interaction(Base):
+    __tablename__ = "interactions"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    contact_id = Column(Integer, ForeignKey("contacts.contact_id"), nullable=False)
+    interaction_date = Column(Date, default=func.current_date())
+    interaction_type = Column(String(50), nullable=False)
+    notes = Column(String(255))
+
+    user = relationship("User", foreign_keys=[user_id])
+    contact = relationship("Contacts", foreign_keys=[contact_id])
+
+    @classmethod
+    def get_as_dataframe(cls):
+        with session_scope() as session:
+            user_alias = aliased(User)
+            contact_alias = aliased(Contacts)
+
+            result = session.query(
+                Interaction.id,
+                user_alias.user_name.label("user_name"),
+                contact_alias.contact_name.label("contact_name"),
+                Interaction.interaction_date,
+                Interaction.interaction_type,
+                Interaction.notes
+            ).join(
+                user_alias, user_alias.user_id == Interaction.user_id
+            ).join(
+                contact_alias, contact_alias.contact_id == Interaction.contact_id
+            ).all()
+
+        df = pd.DataFrame(result,
+                          columns=["id", "user_name", "contact_name", "interaction_date", "interaction_type", "notes"])
+
+        df.index += 1
+        return df
+
+    @classmethod
+    def add_interaction(cls, user_name, contact_name, interaction_type, notes=None, interaction_date=None):
+        with session_scope() as session:
+            user = session.query(User).filter(User.user_name == user_name).first()
+            contact = session.query(Contacts).filter(Contacts.contact_name == contact_name).first()
+
+            if not user:
+                return "Пользователь не найден"
+            if not contact:
+                return "Контакт не найден"
+
+            new_interaction = Interaction(
+                user_id=user.user_id,
+                contact_id=contact.contact_id,
+                interaction_type=interaction_type,
+                notes=notes,
+                interaction_date=interaction_date or func.current_date()
+            )
+
+            try:
+                session.add(new_interaction)
+                contact.last_interaction = interaction_date or func.current_date()
+                session.commit()
+            except IntegrityError as e:
+                session.rollback()
+
+    @classmethod
+    def delete_interaction(cls, int_id):
+        with session_scope() as session:
+            interaction = session.query(cls).filter_by(id=int_id).first()
+            if interaction:
+                session.delete(interaction)
+                session.commit()
+
+    @classmethod
+    def edit_interaction(cls, int_id, contact, **parameters):
+        with session_scope() as session:
+            record = session.query(cls).filter_by(id=int_id).first()
+            contact_name = session.query(Contacts).filter(Contacts.contact_name == contact).first()
+            record.contact_id = contact_name.contact_id
+            for field, value in parameters.items():
+                if hasattr(record, field):
+                    setattr(record, field, value)
 
 
 Base.metadata.create_all(bind=engine)

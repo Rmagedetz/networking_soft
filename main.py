@@ -38,13 +38,14 @@ main_page = st.Page("pages/main_page.py", title="Главная", icon=":materia
 circles_page = st.Page("pages/circles_page.py", title="Круги", icon=":material/settings_accessibility:")
 contacts_page = st.Page("pages/contacts_page.py", title="Контакты", icon=":material/contacts:")
 tasks_page = st.Page("pages/tasks.py", title="Задачи", icon=":material/add_task:")
-connections_page = st.Page("pages/connections.py", title="Связи", icon=":material/link:")
+connections_page = st.Page("pages/connections.py", title="Связи", icon=":material/share:")
+interactions_page = st.Page("pages/interactions_page.py", title="Взаимодействия", icon=":material/handshake:")
 
 if st.session_state.logged_in:
     pg = st.navigation(
         {
             "Логин": [logout_page],
-            "Страницы": [main_page, circles_page, contacts_page, tasks_page, connections_page]
+            "Страницы": [main_page, circles_page, contacts_page, tasks_page, connections_page, interactions_page]
         }
     )
 else:

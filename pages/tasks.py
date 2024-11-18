@@ -9,13 +9,41 @@ tasks_in, tasks_out = st.tabs(["Входящие", "Исходящие"])
 with tasks_in:
     data = sql.Task.get_incomplete_tasks_by_executor(username)
     if not data.empty:
-        data.columns = ["ID", "Задача", "Описание", "Дата выполнения", "Контакт"]
-    st.write(data)
+        original_done = data['done'].copy()
+        editor = st.data_editor(data,
+                                column_config={"id": st.column_config.Column("ID", disabled=True),
+                                               "task_name": st.column_config.Column("Задача", disabled=True),
+                                               "description": st.column_config.Column("Описание", disabled=True),
+                                               "due_date": st.column_config.DateColumn("Дата", disabled=True,
+                                                                                       format="DD.MM.YYYY"),
+                                               "contact_name": st.column_config.Column("Контакт", disabled=True),
+                                               "creator_name": st.column_config.Column("Создатель", disabled=True),
+                                               "done": st.column_config.CheckboxColumn("Выполнена")}, key="in")
+        if not data.equals(editor):
+            changed_rows = editor[editor['done'] != original_done]
+            done = changed_rows[['id', 'done']]
+            for _, task in done.iterrows():
+                sql.Task.edit_task(task["id"], done=int(task["done"]))
+                st.rerun()
 with tasks_out:
     data = sql.Task.get_incomplete_tasks_by_creator(username)
     if not data.empty:
-        data.columns = ["ID", "Задача", "Описание", "Дата выполнения", "Контакт"]
-    st.write(data)
+        original_done = data['done'].copy()
+        editor = st.data_editor(data,
+                                column_config={"id": st.column_config.Column("ID", disabled=True),
+                                               "task_name": st.column_config.Column("Задача", disabled=True),
+                                               "description": st.column_config.Column("Описание", disabled=True),
+                                               "due_date": st.column_config.DateColumn("Дата", disabled=True,
+                                                                                       format="DD.MM.YYYY"),
+                                               "contact_name": st.column_config.Column("Контакт", disabled=True),
+                                               "executor_name": st.column_config.Column("Исполнитель", disabled=True),
+                                               "done": st.column_config.CheckboxColumn("Выполнена")}, key="out")
+        if not data.equals(editor):
+            changed_rows = editor[editor['done'] != original_done]
+            done = changed_rows[['id', 'done']]
+            for _, task in done.iterrows():
+                sql.Task.edit_task(task["id"], done=int(task["done"]))
+                st.rerun()
 
 
 @st.dialog("Создание задачи")
@@ -28,7 +56,7 @@ def add_task():
     today = datetime.date.today()
     date = st.date_input("Дата выполнения", min_value=today, value=None)
 
-    if st.button("add"):
+    if st.button("Добавить задачу"):
         if not executor_name:
             st.error("Выберите исполнителя")
         elif not contact_name:
@@ -55,28 +83,38 @@ def edit_task():
         description = task_data["description"][0]
         due_date = task_data["due_date"][0]
         contact_name = task_data["contact_name"][0]
+        executor_name = task_data["executor_name"][0]
 
         new_name = st.text_input("Название задачи", task_name)
         new_description = st.text_area("Описание", description)
         new_date = st.date_input("Дата выполнения", value=due_date)
-        new_contact_name = st.selectbox("Контакт", sql.Contacts.get_contacts_list())
+        c_list = sql.Contacts.get_contacts_list()
+        new_contact_name = st.selectbox("Контакт", c_list, index=c_list.index(contact_name))
+        ex_list = sql.User.get_user_list()
+        new_executor_name = st.selectbox("Исполнитель", ex_list, index=ex_list.index(executor_name))
 
         if new_contact_name:
             idx = sql.Contacts.get_contact_by_name(new_contact_name)
+
+        if new_executor_name:
+            exec_idx = sql.User.get_user_id_by_name(new_executor_name)
 
         name_changed = new_name != task_name
         desc_changed = new_description != description
         date_changed = new_date != due_date
         contact_changed = new_contact_name != contact_name
+        executor_changed = new_executor_name != executor_name
 
-        something_changed = any([name_changed, desc_changed, date_changed, contact_changed])
+        something_changed = any([name_changed, desc_changed, date_changed, contact_changed, executor_changed])
 
         if st.button("Редактировать задачу", disabled=not something_changed):
             sql.Task.edit_task(id_selected,
                                task_name=new_name,
                                description=new_description,
                                due_date=new_date,
-                               contact_id=idx)
+                               contact_id=idx,
+                               executor_id=exec_idx)
+            st.rerun()
 
 
 @st.dialog("Удалить задачу")
