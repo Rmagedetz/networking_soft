@@ -40,12 +40,13 @@ contacts_page = st.Page("pages/contacts_page.py", title="Контакты", icon
 tasks_page = st.Page("pages/tasks.py", title="Задачи", icon=":material/add_task:")
 connections_page = st.Page("pages/connections.py", title="Связи", icon=":material/share:")
 interactions_page = st.Page("pages/interactions_page.py", title="Взаимодействия", icon=":material/handshake:")
+dates = st.Page("pages/dates_page.py", title="Даты", icon=":material/event:")
 
 if st.session_state.logged_in:
     pg = st.navigation(
         {
             "Логин": [logout_page],
-            "Страницы": [main_page, circles_page, contacts_page, tasks_page, connections_page, interactions_page]
+            "Страницы": [main_page, circles_page, contacts_page, tasks_page, connections_page, interactions_page, dates]
         }
     )
 else:

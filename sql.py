@@ -149,10 +149,14 @@ class Contacts(Base):
     contact_name = Column(String(100), nullable=False)
     email = Column(String(100))
     phone = Column(String(50))
+    hobbies = Column(String(200))
+    additional = Column(String(500))
+    birthday = Column(Date)
     last_interaction = Column(Date)
     circle_id = Column(Integer, ForeignKey("circles.circle_id"), nullable=False)
 
     circle = relationship("Circles", back_populates="contacts")
+    important_dates = relationship("ImportantDates", back_populates="contact", cascade="all, delete-orphan")
 
     @classmethod
     def get_contacts_list(cls):
@@ -182,7 +186,8 @@ class Contacts(Base):
     def get_contacts_as_dataframe(cls):
         with session_scope() as session:
             contacts = (
-                session.query(cls.contact_name, cls.email, cls.phone, cls.last_interaction, Circles.circle_name)
+                session.query(cls.contact_name, cls.email, cls.phone, cls.birthday,
+                              cls.hobbies, cls.additional, cls.last_interaction, Circles.circle_name)
                 .join(Circles, cls.circle_id == Circles.circle_id)
                 .all()
             )
@@ -523,6 +528,39 @@ class Interaction(Base):
             for field, value in parameters.items():
                 if hasattr(record, field):
                     setattr(record, field, value)
+
+
+class ImportantDates(Base):
+    __tablename__ = "important_dates"
+
+    date_id = Column(Integer, primary_key=True)
+    contact_id = Column(Integer, ForeignKey("contacts.contact_id"), nullable=False)
+    date = Column(Date, nullable=False)
+    description = Column(String(200), nullable=False)
+
+    contact = relationship("Contacts", back_populates="important_dates")
+
+    @classmethod
+    def get_important_dates_dataframe(cls):
+        with session_scope() as session:
+            results = session.query(
+                Contacts.contact_name,
+                cls.date,
+                cls.description
+            ).join(Contacts, cls.contact_id == Contacts.contact_id).all()
+
+            df = pd.DataFrame(results, columns=["Имя контакта", "Дата", "Описание"])
+            return df
+
+    @classmethod
+    def add_date_for_contact(cls, contact_name, **parameters):
+        with session_scope() as session:
+            contact = session.query(Contacts).filter(Contacts.contact_name == contact_name).first()
+            try:
+                add = cls(contact_id=contact.contact_id, **parameters)
+                session.add(add)
+            except:
+                pass
 
 
 Base.metadata.create_all(bind=engine)
