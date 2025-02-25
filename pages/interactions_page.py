@@ -1,7 +1,6 @@
 import streamlit as st
 import sql
 
-st.write("interactions")
 data = sql.Interaction.get_as_dataframe()
 data.columns = ["ID", "Пользователь", "Контакт", "Дата", "Тип контакта", "Описание"]
 st.write(data)

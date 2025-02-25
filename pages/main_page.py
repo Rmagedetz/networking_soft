@@ -57,8 +57,6 @@ def get_circles_to_follow_up():
     return pd.DataFrame(circles_to_follow_up)
 
 
-st.title("Главная страница для пользователя")
-
 st.header("Задачи на сегодня")
 today_tasks = get_today_tasks()
 if not today_tasks.empty:
